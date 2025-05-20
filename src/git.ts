@@ -62,26 +62,44 @@ export async function makeCommit(commitDate?: Date): Promise<void> {
         const relativePath = path.relative(config.repoPath, config.targetFile)
         await git.add(relativePath)
 
-        const commitOptions: any = {}
         const commitMessage = getRandomCommitMessage()
 
         // Set commit date if provided
         if (commitDate) {
             const dateString = commitDate.toISOString()
-            commitOptions.env = {
-                GIT_AUTHOR_DATE: dateString,
-                GIT_COMMITTER_DATE: dateString
-            }
+
+            // Using environment variables directly
+            process.env.GIT_AUTHOR_DATE = dateString
+            process.env.GIT_COMMITTER_DATE = dateString
+
+            await git.commit(commitMessage)
+
+            // Clean up environment variables after commit
+            delete process.env.GIT_AUTHOR_DATE
+            delete process.env.GIT_COMMITTER_DATE
+        } else {
+            await git.commit(commitMessage)
         }
 
-        await git.commit(commitMessage, commitOptions)
-        console.log(`Committed changes with message: ${commitMessage}`)
+        console.log(`Created commit with message: ${commitMessage}`)
 
-        // Push to remote
-        await git.push("origin", config.branch)
-        console.log(`Pushed changes to ${config.branch}`)
+        // We don't push here - pushing will be done in batch later
     } catch (error) {
         console.error("Error making commit:", error)
+        throw error
+    }
+}
+
+// Push all accumulated commits to remote
+export async function pushCommits(): Promise<void> {
+    const git = initGit()
+
+    try {
+        console.log("Pushing all accumulated commits to remote...")
+        await git.push("origin", config.branch)
+        console.log(`Successfully pushed all commits to ${config.branch}`)
+    } catch (error) {
+        console.error("Error pushing commits:", error)
         throw error
     }
 }

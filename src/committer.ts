@@ -1,6 +1,6 @@
 // src/committer.ts
 import { updateFile } from "./files"
-import { makeCommit } from "./git"
+import { makeCommit, pushCommits } from "./git"
 import {
     getRandomInt,
     getRandomCommitCount,
@@ -10,8 +10,16 @@ import {
 } from "./utils"
 import { config } from "./config"
 
+// Maximum number of commits before pushing
+const MAX_COMMITS_BEFORE_PUSH = 75 // A random value between 50-100
+
+// Counter for tracking days with commits
+let consecutiveDaysWithCommits = 0
+
+// Counter for tracking total commits since last push
+let commitsSinceLastPush = 0
+
 // Generate a sequential array of timestamps for a given day
-// (ensuring they're in ascending order throughout the day)
 function generateTimestampsForDay(date: Date, count: number): Date[] {
     // Reset time to start of day
     const baseDate = new Date(date)
@@ -20,7 +28,6 @@ function generateTimestampsForDay(date: Date, count: number): Date[] {
     // Business hours: 9 AM to 6 PM (in seconds: 9*3600 to 18*3600)
     const startOfDay = 9 * 3600 // 9 AM in seconds
     const endOfDay = 18 * 3600 // 6 PM in seconds
-    const dayRange = endOfDay - startOfDay
 
     // Generate random seconds within the day but ensure they're in order
     const secondsInDay: number[] = []
@@ -63,13 +70,67 @@ export async function processDateRange(): Promise<void> {
 
     // Process each day in the range
     while (currentDate <= endDate) {
+        // Check if we should take a break (after 3-7 consecutive days with commits)
+        if (shouldTakeBreak()) {
+            const breakDays = getRandomInt(1, 2) // 1-2 days break
+            console.log(`Taking a ${breakDays} day break from commits...`)
+
+            // If we have pending commits, push them before the break
+            if (commitsSinceLastPush > 0) {
+                await pushCommits()
+                commitsSinceLastPush = 0
+            }
+
+            // Add the break days to current date
+            for (let i = 0; i < breakDays; i++) {
+                currentDate = getNextDay(currentDate)
+                if (currentDate > endDate) break
+            }
+
+            // Reset consecutive days counter
+            consecutiveDaysWithCommits = 0
+
+            // If we've gone past the end date due to the break, exit
+            if (currentDate > endDate) break
+        }
+
+        // Process this day
         await processDay(currentDate)
+        consecutiveDaysWithCommits++
+
+        // Check if we need to push commits
+        if (commitsSinceLastPush >= MAX_COMMITS_BEFORE_PUSH) {
+            console.log(
+                `Reached ${commitsSinceLastPush} commits, pushing to remote...`
+            )
+            await pushCommits()
+            commitsSinceLastPush = 0
+
+            // Add a delay after pushing to avoid rate limiting
+            const pushDelay = getRandomInt(5000, 15000) // 5-15 seconds
+            console.log(`Waiting ${pushDelay / 1000} seconds after push...`)
+            await new Promise((resolve) => setTimeout(resolve, pushDelay))
+        }
 
         // Move to the next day
         currentDate = getNextDay(currentDate)
     }
 
+    // Push any remaining commits
+    if (commitsSinceLastPush > 0) {
+        console.log(`Pushing ${commitsSinceLastPush} remaining commits...`)
+        await pushCommits()
+    }
+
     console.log("All commits completed successfully")
+}
+
+// Determine if we should take a break from committing
+function shouldTakeBreak(): boolean {
+    // Take a break after 3-7 consecutive days with commits
+    // The probability increases as we get more consecutive days
+    const breakThreshold = getRandomInt(1, 5)
+    return consecutiveDaysWithCommits >= breakThreshold
 }
 
 // Process commits for a single day
@@ -94,17 +155,22 @@ async function processDay(date: Date): Promise<void> {
             // Update file content
             await updateFile()
 
-            // Commit and push changes
+            // Commit changes (but don't push yet)
             await makeCommit(commitTime)
+            commitsSinceLastPush++
 
-            // Small delay to avoid Git conflicts and rate limits
-            await new Promise((resolve) => setTimeout(resolve, 1000))
+            // Add a small delay between commits
+            const delay = getRandomInt(1000, 2000) // 1-2 seconds
+            await new Promise((resolve) => setTimeout(resolve, delay))
         } catch (error) {
             console.error(
                 `Error processing commit ${i + 1} for ${formatDate(date)}:`,
                 error
             )
-            // Continue with the next commit instead of breaking the entire process
+
+            // Add a longer delay after an error
+            console.log("Waiting 10 seconds after error before continuing...")
+            await new Promise((resolve) => setTimeout(resolve, 10000))
         }
     }
 
